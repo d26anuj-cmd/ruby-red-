@@ -4,7 +4,8 @@ A simple web app that shows live CoinDCX futures prices. It needs no API key.
 
 - Shows last price, mark price, 24h change, high/low, volume and funding rate
 - Refreshes every 5 seconds
-- Search, sorting and ★ favourites (saved in your browser)
+- 🔥 Top Movers tab: coins ranked by 24h % move (up or down), with rank and price move
+- Gainers, Losers and Volume tabs, search and ★ favourites (saved in your browser)
 
 ## How to use
 
