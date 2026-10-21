@@ -13,14 +13,21 @@ jobs:
           probe() {
             echo "=================== $1"
             curl -sS -m 30 -H "$O" -D /tmp/h -o /tmp/b "$1" || true
-            grep -iE "^HTTP|access-control|content-type" /tmp/h || true
+            grep -iE "^HTTP|access-control-allow-origin|content-type" /tmp/h || true
             echo "--- bytes: $(wc -c < /tmp/b)"
-            head -c 1500 /tmp/b; echo
+            head -c 400 /tmp/b; echo
           }
-          probe "https://api.coindcx.com/exchange/v1/derivatives/futures/data/active_instruments?margin_currency_short_name%5B%5D=INR"
-          probe "https://api.coindcx.com/exchange/v1/derivatives/futures/data/active_instruments?margin_currency_short_name%5B%5D=USDT"
-          probe "https://public.coindcx.com/market_data/v3/current_prices/futures/rt"
-          echo "=== rt keys sample"; python3 -c "import json;d=json.load(open('/tmp/b'));p=d.get('prices',d);k=list(p);print(len(k));print([x for x in k if 'INR' in x][:30]);print(k[:20]);print(json.dumps(p[k[0]]))" || true
+          RT="https://public.coindcx.com/market_data/v3/current_prices/futures/rt"
+          ENC=$(python3 -c "import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1],safe=''))" "$RT")
+          probe "https://corsproxy.io/?url=$ENC"
+          probe "https://api.allorigins.win/raw?url=$ENC"
+          probe "https://api.codetabs.com/v1/proxy?quest=$RT"
           NOW=$(date +%s); FROM=$((NOW-3600))
-          probe "https://public.coindcx.com/market_data/candlesticks?pair=B-BTC_USDT&from=$FROM&to=$NOW&resolution=15&pcode=f"
-          probe "https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js" | head -8
+          C="https://public.coindcx.com/market_data/candlesticks?pair=B-BTC_USDT&from=$FROM&to=$NOW&resolution=15&pcode=f"
+          CENC=$(python3 -c "import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1],safe=''))" "$C")
+          probe "https://corsproxy.io/?url=$CENC"
+          probe "https://api.allorigins.win/raw?url=$CENC"
+          echo "=== USDTINR"
+          curl -sS -m 30 https://api.coindcx.com/exchange/ticker | python3 -c "import json,sys;d=json.load(sys.stdin);print([x for x in d if x.get('market') in ('USDTINR','BTCINR')])" || true
+          probe "https://api.coindcx.com/api/v1/derivatives/futures/data/conversions"
+          probe "https://api.coindcx.com/exchange/v1/derivatives/futures/data/instrument?pair=B-BTC_USDT&margin_currency_short_name=INR"
