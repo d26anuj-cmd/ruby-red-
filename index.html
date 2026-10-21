@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="hi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CoinDCX Futures Prices</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #ffffff; --text: #14171c; --muted: #6b7280;
+    --border: #e5e7eb; --up: #0f9d58; --down: #d93025; --accent: #3b5bdb;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1115; --card: #181b21; --text: #e8eaed; --muted: #9aa0a6;
+      --border: #2a2e36; --up: #34c27a; --down: #f2685c; --accent: #7b93ff;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans Devanagari", sans-serif;
+  }
+  header {
+    position: sticky; top: 0; z-index: 2; background: var(--bg);
+    padding: 12px 16px; border-bottom: 1px solid var(--border);
+  }
+  h1 { font-size: 18px; margin: 0 0 8px; }
+  .controls { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  input[type=search] {
+    flex: 1 1 180px; padding: 10px 12px; font-size: 16px;
+    border: 1px solid var(--border); border-radius: 8px;
+    background: var(--card); color: var(--text);
+  }
+  select, button {
+    padding: 10px 12px; font-size: 14px; border-radius: 8px;
+    border: 1px solid var(--border); background: var(--card); color: var(--text);
+  }
+  button.on { border-color: var(--accent); color: var(--accent); }
+  .status { font-size: 12px; color: var(--muted); margin-top: 6px; }
+  .status.err { color: var(--down); }
+  main { padding: 12px 16px 40px; max-width: 900px; margin: 0 auto; }
+  .row {
+    display: grid; grid-template-columns: 28px 1fr auto; gap: 4px 10px;
+    align-items: center; background: var(--card); border: 1px solid var(--border);
+    border-radius: 10px; padding: 10px 12px; margin-bottom: 8px;
+  }
+  .star { background: none; border: 0; padding: 0; font-size: 20px; cursor: pointer; color: var(--muted); }
+  .star.fav { color: #f5b400; }
+  .sym { font-weight: 600; font-size: 15px; }
+  .price { font-weight: 600; font-size: 16px; text-align: right; font-variant-numeric: tabular-nums; }
+  .chg { font-size: 13px; text-align: right; font-variant-numeric: tabular-nums; }
+  .up { color: var(--up); } .down { color: var(--down); }
+  .meta {
+    grid-column: 2 / 4; font-size: 12px; color: var(--muted);
+    display: flex; flex-wrap: wrap; gap: 4px 14px; font-variant-numeric: tabular-nums;
+  }
+  .flash-up { animation: fu .8s; } .flash-down { animation: fd .8s; }
+  @keyframes fu { from { background: color-mix(in srgb, var(--up) 25%, transparent); } }
+  @keyframes fd { from { background: color-mix(in srgb, var(--down) 25%, transparent); } }
+  .empty { text-align: center; color: var(--muted); padding: 40px 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>CoinDCX Futures — लाइव प्राइस</h1>
+  <div class="controls">
+    <input id="q" type="search" placeholder="कॉइन खोजें (जैसे BTC, ETH)" autocomplete="off">
+    <select id="sort" aria-label="Sort">
+      <option value="vol">Volume ↓</option>
+      <option value="chg_desc">Top gainers</option>
+      <option value="chg_asc">Top losers</option>
+      <option value="name">Name A–Z</option>
+    </select>
+    <button id="favBtn" type="button">★ Favourites</button>
+  </div>
+  <div id="status" class="status">लोड हो रहा है…</div>
+</header>
+<main id="list"></main>
+
+<script>
+// CoinDCX public futures ticker (no API key needed).
+const URL_RT = "https://public.coindcx.com/market_data/v3/current_prices/futures/rt";
+const REFRESH_MS = 5000;
+
+const $ = id => document.getElementById(id);
+const state = { data: {}, prev: {}, favOnly: false, favs: loadFavs() };
+
+function loadFavs() {
+  try { return new Set(JSON.parse(localStorage.getItem("favs") || "[]")); }
+  catch { return new Set(); }
+}
+function saveFavs() {
+  try { localStorage.setItem("favs", JSON.stringify([...state.favs])); } catch {}
+}
+
+// "B-BTC_USDT" -> "BTC / USDT"
+function prettySym(s) {
+  return s.replace(/^B-/, "").replace("_", " / ");
+}
+function fmtPrice(n) {
+  if (n == null || isNaN(n)) return "–";
+  const d = n >= 1000 ? 2 : n >= 1 ? 4 : 6;
+  return n.toLocaleString("en-US", { maximumFractionDigits: d });
+}
+function fmtNum(n) {
+  if (n == null || isNaN(n)) return "–";
+  if (n >= 1e9) return (n / 1e9).toFixed(2) + "B";
+  if (n >= 1e6) return (n / 1e6).toFixed(2) + "M";
+  if (n >= 1e3) return (n / 1e3).toFixed(1) + "K";
+  return n.toFixed(2);
+}
+const num = v => (v === undefined || v === null || v === "" ? null : Number(v));
+
+async function load() {
+  try {
+    const res = await fetch(URL_RT, { cache: "no-store" });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    const json = await res.json();
+    const prices = json.prices || json;
+    state.prev = state.data;
+    state.data = {};
+    for (const [sym, p] of Object.entries(prices)) {
+      if (!p || typeof p !== "object") continue;
+      state.data[sym] = {
+        sym,
+        last: num(p.ls),
+        mark: num(p.mp),
+        chg: num(p.pc),
+        high: num(p.h),
+        low: num(p.l),
+        vol: num(p.v),
+        funding: num(p.fr),
+      };
+    }
+    const st = $("status");
+    st.className = "status";
+    st.textContent = Object.keys(state.data).length + " कॉइन · अपडेट: " +
+      new Date().toLocaleTimeString() + " · हर 5 सेकंड में रिफ्रेश";
+    render();
+  } catch (e) {
+    const st = $("status");
+    st.className = "status err";
+    st.textContent = "प्राइस नहीं मिल पाया (" + e.message + "). इंटरनेट जाँचें — थोड़ी देर में फिर कोशिश होगी।";
+  }
+}
+
+function render() {
+  const q = $("q").value.trim().toUpperCase();
+  let rows = Object.values(state.data);
+  if (q) rows = rows.filter(r => r.sym.toUpperCase().includes(q));
+  if (state.favOnly) rows = rows.filter(r => state.favs.has(r.sym));
+
+  const sort = $("sort").value;
+  rows.sort((a, b) => {
+    if (sort === "name") return a.sym.localeCompare(b.sym);
+    if (sort === "chg_desc") return (b.chg ?? -1e9) - (a.chg ?? -1e9);
+    if (sort === "chg_asc") return (a.chg ?? 1e9) - (b.chg ?? 1e9);
+    return (b.vol ?? 0) - (a.vol ?? 0);
+  });
+  // Favourites always on top.
+  rows.sort((a, b) => state.favs.has(b.sym) - state.favs.has(a.sym));
+
+  const list = $("list");
+  if (!rows.length) {
+    list.innerHTML = '<div class="empty">' +
+      (Object.keys(state.data).length ? "कोई कॉइन नहीं मिला" : "लोड हो रहा है…") + "</div>";
+    return;
+  }
+
+  list.innerHTML = rows.slice(0, 300).map(r => {
+    const prev = state.prev[r.sym];
+    let flash = "";
+    if (prev && prev.last != null && r.last != null && prev.last !== r.last) {
+      flash = r.last > prev.last ? "flash-up" : "flash-down";
+    }
+    const cls = r.chg == null ? "" : r.chg >= 0 ? "up" : "down";
+    const chg = r.chg == null ? "–" : (r.chg >= 0 ? "+" : "") + r.chg.toFixed(2) + "%";
+    const fav = state.favs.has(r.sym);
+    const fr = r.funding == null ? "–" : (r.funding * 100).toFixed(4) + "%";
+    return `<div class="row ${flash}">
+      <button class="star ${fav ? "fav" : ""}" data-sym="${r.sym}" aria-label="favourite">${fav ? "★" : "☆"}</button>
+      <div class="sym">${prettySym(r.sym)}</div>
+      <div>
+        <div class="price ${cls}">${fmtPrice(r.last)}</div>
+        <div class="chg ${cls}">${chg}</div>
+      </div>
+      <div class="meta">
+        <span>Mark: ${fmtPrice(r.mark)}</span>
+        <span>H: ${fmtPrice(r.high)}</span>
+        <span>L: ${fmtPrice(r.low)}</span>
+        <span>Vol: ${fmtNum(r.vol)}</span>
+        <span>Funding: ${fr}</span>
+      </div>
+    </div>`;
+  }).join("");
+}
+
+$("list").addEventListener("click", e => {
+  const b = e.target.closest(".star");
+  if (!b) return;
+  const s = b.dataset.sym;
+  state.favs.has(s) ? state.favs.delete(s) : state.favs.add(s);
+  saveFavs();
+  render();
+});
+$("q").addEventListener("input", render);
+$("sort").addEventListener("change", render);
+$("favBtn").addEventListener("click", () => {
+  state.favOnly = !state.favOnly;
+  $("favBtn").classList.toggle("on", state.favOnly);
+  render();
+});
+
+load();
+setInterval(load, REFRESH_MS);
+</script>
+</body>
+</html>
